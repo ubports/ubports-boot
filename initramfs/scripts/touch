@@ -1,0 +1,517 @@
+# Local filesystem mounting			-*- shell-script -*-
+
+pre_mountroot()
+{
+	[ "$quiet" != "y" ] && log_begin_msg "Running /scripts/local-top"
+	run_scripts /scripts/local-top
+	[ "$quiet" != "y" ] && log_end_msg
+}
+
+identify_boot_mode()
+{
+	# Our current list of supported boot modes:
+	## BOOT_MODE = ubuntu and android
+	BOOT_MODE='ubuntu'
+
+	# The boot reason is exported via /proc/cmdline
+	# The standard method is using androidboot.mode parameter.
+
+	for x in $(cat /proc/cmdline); do
+		case ${x} in
+		androidboot.mode=*)
+			android_bootmode=${x#*=}
+			;;
+		esac
+	done
+
+	if echo "$android_bootmode" | grep charger; then
+		BOOT_MODE="android"
+	fi
+
+	## Some devices may be using 'bootreason', others 'boot_reason'
+	## XXX: Find a better way to handle device specifics here
+
+	# Krillin
+	if [ -f /sys/class/BOOT/BOOT/boot/boot_mode ]; then
+		boot_reason=`cat /sys/class/BOOT/BOOT/boot/boot_mode`
+		case "${boot_reason}" in
+		1) BOOT_MODE="android" ;; # Meta
+		4) BOOT_MODE="android" ;; # Factory
+		8) BOOT_MODE="android" ;; # Power off charging
+		9) BOOT_MODE="android" ;; # Low power charging
+		esac
+	fi
+
+	echo "initrd: boot mode: $BOOT_MODE" >/dev/kmsg || true
+}
+
+set_ubuntu_version_properties() {
+	ubuntu_system=$1
+	android_data=$2
+
+	channel_ini=$1/etc/system-image/channel.ini
+	def_language=$1/custom/default_language
+
+	ubuntu="unknown"
+	device="unknown"
+	custom="unknown"
+	version="unknown"
+	channel="unknown"
+	def_lang="unknown"
+
+	if [ -f "$channel_ini" ]; then
+		IFS=','
+		for i in `grep version_detail $channel_ini | awk -F ' ' '{print $2}'`; do
+			id=${i%=*}
+			case $id in
+				ubuntu) ubuntu=${i#ubuntu=} ;;
+				device) device=${i#device=} ;;
+				custom) custom=${i#custom=} ;;
+				version) version=${i#version=} ;;
+			esac
+		done
+		unset IFS
+		channel=`grep channel $channel_ini | awk -F ' ' '{print $2}'`
+	fi
+
+	if [ -f "$def_language" ]; then
+		lang=`cat $def_language`
+		if [ -n "$lang" ]; then
+			def_lang=$lang
+		fi
+	fi
+
+	# Write down so the android property system can load them automatically
+	mkdir -p $android_data/property
+	chmod 700 $android_data/property
+	echo -n "$ubuntu" > $android_data/property/persist.ubuntu.version.rootfs
+	echo -n "$device" > $android_data/property/persist.ubuntu.version.device
+	echo -n "$custom" > $android_data/property/persist.ubuntu.version.custom
+	echo -n "$channel" > $android_data/property/persist.ubuntu.version.channel
+	echo -n "$version" > $android_data/property/persist.ubuntu.version
+	echo -n "$def_lang" > $android_data/property/persist.ubuntu.default_language
+	chmod 600 $android_data/property/persist.ubuntu*
+}
+
+mount_android_partitions() {
+	fstab=$1
+	mount_root=$2
+
+	echo "initrd: checking fstab $fstab for additional mount points" >/dev/kmsg || true
+
+	cat ${fstab} | while read line; do
+		set -- $line
+
+		# stop processing if we hit the "#endubuntu" comment in the file
+		echo $1 | egrep -q "^#endubuntu" && break
+
+		# Skip any unwanted entry
+		echo $1 | egrep -q "^#" && continue
+		([ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]) && continue
+		([ "$2" = "/system" ] || [ "$2" = "/data" ]) && continue
+
+		label=$(echo $1 | awk -F/ '{print $NF}')
+		[ -z "$label" ] && continue
+
+		echo "initrd: checking mount label $label" >/dev/kmsg || true
+
+		# In case fstab provides /dev/mmcblk0p* lines
+		path="/dev/$label"
+		for dir in by-partlabel by-name by-label by-path by-uuid by-partuuid by-id; do
+			if [ -e "/dev/disk/$dir/$label" ]; then
+				path="/dev/disk/$dir/$label"
+				break
+			fi
+		done
+
+		[ ! -e "$path" ] && continue
+
+		mkdir -p ${mount_root}/$2
+		echo "initrd: mounting $path as ${mount_root}/$2" >/dev/kmsg || true
+		mount $path ${mount_root}/$2 -t $3 -o $4
+	done
+}
+
+mount_ubuntu_overlay() {
+	source=$1
+	target=$2
+
+	if [ -d ${source} ]; then
+		OLD_PWD=$PWD
+		cd ${source}
+
+		for overlay in `find . -type f`; do
+			[ -f ${target}/${overlay} ] && mount --bind ${source}/${overlay} ${target}/${overlay}
+		done
+
+		cd $OLD_PWD
+	fi
+}
+
+sync_dirs() {
+	base=$1
+	source=$2
+	target=$3
+
+	OLD_PWD=$PWD
+	cd $base
+
+	for file in $source/*
+	do
+		# Skip empty directories
+		[ ! -e "$base/$file" ] && continue
+
+		# If the target already exists as a file or link, there's nothing we can do
+		[ -e "$target/$file" -o -L "$target/$file" ] && [ ! -d "$target/$file" ] && continue
+
+		# If the target doesn't exist, just copy it over
+		if [ ! -e "$target/$file" -a ! -L "$target/$file" ]; then
+			cp -Ra "$base/$file" "$target/$file"
+			continue
+		fi
+
+		# That leaves us with directories and a recursive call
+		[ -d $file ] && sync_dirs $base $file $target
+	done
+
+	cd $OLD_PWD
+}
+
+resize_userdata_if_needed() {
+
+	# See if the filesystem on the userdata partition needs resizing (usually on first boot).
+	# If the difference between the partition size and the filesystem size is above a small
+	# threshold, assume it needs resizing to fill the partition.
+
+	path=$1
+
+	# Partition size in 1k blocks
+	case $path in
+	    /dev/mmcblk*)
+	        pblocks=$(grep ${path#/dev/*} /proc/partitions | awk {'print $3'})
+	        ;;
+	    /dev/disk*)
+	        pblocks=$(grep $(basename $(readlink $path)) /proc/partitions | awk {'print $3'})
+	        ;;
+	esac
+	# Filesystem size in 4k blocks
+	fsblocks=$(dumpe2fs -h $path | grep "Block count" | awk {'print $3'})
+	# Difference between the reported sizes in 1k blocks
+	dblocks=$(($pblocks-4*$fsblocks))
+	if [ $dblocks -gt 10000 ];then
+		resize2fs -f $path
+		echo "initrd: resized userdata filesystem to fill $path" >/dev/kmsg || true
+	fi
+}
+
+mountroot()
+{
+	# list of possible userdata partition names
+	partlist="userdata UDA DATAFS USERDATA"
+
+	pre_mountroot
+
+	[ "$quiet" != "y" ] && log_begin_msg "Running /scripts/local-premount"
+	run_scripts /scripts/local-premount
+	[ "$quiet" != "y" ] && log_end_msg
+
+	# Mount root
+	#
+	# Create a temporary mountpoint for the bindmount
+	mkdir -p /tmpmnt
+
+	# Make sure the device has been created by udev before we try to mount
+	udevadm settle
+
+	# find the right partition
+	for partname in $partlist; do
+		part=$(find /dev -name $partname|tail -1)
+		[ -z "$part" ] && continue
+		path=$(readlink -f $part)
+		[ -n "$path" ] && break
+	done
+
+	# override with a possible cmdline parameter
+	if grep -q datapart= /proc/cmdline; then
+		for x in $(cat /proc/cmdline); do
+			case ${x} in
+			datapart=*)
+				path=${x#*=}
+				;;
+			esac
+		done
+	fi
+
+	if [ -z "$path" ]; then
+		echo "initrd: Couldn't find data partition. Spawning adbd ..." >/dev/kmsg || true
+		panic "Couldn't find data partition. Spawning adbd ..."
+	fi
+
+	echo "initrd: checking filesystem integrity for the userdata partition" >/dev/kmsg || true
+	# Mounting and umounting first, let the kernel handle the journal and
+	# orphaned inodes (faster than e2fsck). Then, just run e2fsck forcing -y.
+	# Also check the amount of time used by to check the filesystem.
+	fsck_start=`date +%s`
+	mount -o errors=remount-ro $path /tmpmnt
+	umount /tmpmnt
+	e2fsck -y $path > /run/initramfs/e2fsck.out 2>&1
+	fsck_end=`date +%s`
+	echo "initrd: checking filesystem for userdata took (including e2fsck) $((fsck_end-fsck_start)) seconds" >/dev/kmsg || true
+
+	resize_userdata_if_needed ${path}
+
+	echo "initrd: mounting $path" >/dev/kmsg || true
+
+	# Mount the data partition to a temporary mount point
+	# FIXME: data=journal used as a workaround for bug 1387214
+	mount -o discard,data=journal $path /tmpmnt
+
+	if grep -q systempart= /proc/cmdline; then
+		for x in $(cat /proc/cmdline); do
+			case ${x} in
+			systempart=*)
+				syspart=${x#*=}
+				;;
+			esac
+		done
+	fi
+
+	identify_boot_mode
+
+	# Real partition or image, we both need charger mode.....
+	if ( [ -e /tmpmnt/system.img ] || [ -n "$syspart" ] ) && [ "$BOOT_MODE" = "android" ]; then
+		# Factory/charger mode, just boot directly into the android rootfs
+		mkdir -p /ubuntu-system
+		mkdir -p /android-rootfs
+		mkdir -p /android-system
+
+		echo "initrd: mounting ubuntu system partition" >/dev/kmsg || true
+		if [ -n "$syspart" ]; then
+			mount -o rw $syspart /ubuntu-system
+		else
+			mount -o loop,rw /tmpmnt/system.img /ubuntu-system
+		fi
+		mount -o remount,ro /ubuntu-system
+
+		echo "initrd: mounting android system image" >/dev/kmsg || true
+		mount -o loop,ro /ubuntu-system/var/lib/lxc/android/system.img /android-system
+
+		echo "initrd: extracting android ramdisk" >/dev/kmsg || true
+		OLD_CWD=$(pwd)
+		mount -n -t tmpfs tmpfs /android-rootfs
+		cd /android-rootfs
+		cat /android-system/boot/android-ramdisk.img | gzip -d | cpio -i
+		cd $OLD_CWD
+
+		echo "initrd: using android ramdisk as rootfs" >/dev/kmsg || true
+		mount --move /android-rootfs ${rootmnt}
+
+		# Mounting system
+		mount --move /android-system ${rootmnt}/system
+		mkdir -p ${rootmnt}/ubuntu-system
+		mount --move /ubuntu-system ${rootmnt}/ubuntu-system
+
+		# Mounting userdata
+		mkdir -p ${rootmnt}/data
+		mkdir -p ${rootmnt}/userdata
+		mount --move /tmpmnt ${rootmnt}/userdata
+		mkdir -p ${rootmnt}/userdata/android-data
+		mount -o bind ${rootmnt}/userdata/android-data ${rootmnt}/data
+
+		# Set ubuntu version properties
+		set_ubuntu_version_properties ${rootmnt}/ubuntu-system ${rootmnt}/data
+
+		# Mount all the remaining android partitions
+		mount_android_partitions "${rootmnt}/fstab*" ${rootmnt}
+
+		# Make sure we're booting into android's init
+		ln -s ../init ${rootmnt}/sbin/init
+		ln -s ../init ${rootmnt}/sbin/recovery
+		echo "initrd: booting android..." >/dev/kmsg || true
+    elif [ -e /tmpmnt/system.img -o -n "$syspart" ]; then
+	    # Loop-mounted flipped model
+		# Transition .developer_mode to .writable_image
+		[ -e /tmpmnt/.developer_mode ] && mv /tmpmnt/.developer_mode /tmpmnt/.writable_image
+
+		# Prepare the root filesystem
+		# NOTE: We mount it read-write in all cases, then remount read-only.
+		#       This is to workaround a behaviour change in busybox which now
+		#       uses read-only loops if the fs is initially mounted read-only.
+		#       An alternative implementation would be to add losetup support
+		#       to busybox and do the mount in two steps (rw loop, ro fs).
+		if [ -n "$syspart" ]; then
+			mount -o rw $syspart ${rootmnt}
+		else
+			mount -o loop,rw /tmpmnt/system.img ${rootmnt}
+		fi
+		if [ -e /tmpmnt/.writable_image ]; then
+			echo "initrd: mounting system.img (image developer mode)" >/dev/kmsg || true
+			mountroot_status="$?"
+		else
+			echo "initrd: mounting system.img (user mode)" >/dev/kmsg || true
+			mount -o remount,ro ${rootmnt}
+			mountroot_status="$?"
+		fi
+		mount --move /tmpmnt ${rootmnt}/userdata
+
+		# Set ubuntu version properties
+		mkdir -p ${rootmnt}/userdata/android-data
+		set_ubuntu_version_properties ${rootmnt} ${rootmnt}/userdata/android-data
+
+		# Mount the android system partition to a temporary location
+		mkdir -p /android-system
+
+		MOUNT="ro"
+		[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
+		echo "initrd: mounting device image as $MOUNT" >/dev/kmsg || true
+		mount -o loop,$MOUNT ${rootmnt}/var/lib/lxc/android/system.img /android-system
+
+		# Get device information
+		device=$(grep ^ro.product.device= /android-system/build.prop |sed -e 's/.*=//')
+		[ -z "$device" ] && device="unknown"
+		echo "initrd: device is $device" >/dev/kmsg || true
+
+		# Mount some tmpfs
+		mkdir -p ${rootmnt}/android
+		mount -o rw,size=4096 -t tmpfs none ${rootmnt}/android
+		mount -o rw,nosuid,noexec,relatime,mode=755 -t tmpfs tmpfs ${rootmnt}/run
+
+		# Create some needed paths on tmpfs
+		mkdir -p ${rootmnt}/android/data ${rootmnt}/android/system
+
+		# Prepare the fstab
+		FSTAB=${rootmnt}/etc/fstab
+		touch ${rootmnt}/run/image.fstab
+		mount -o bind ${rootmnt}/run/image.fstab $FSTAB || panic "drop to adb"
+		echo "/dev/root / rootfs defaults,ro 0 0" >> $FSTAB
+
+		# Process the list of bind-mounts
+		# (but don't mount them, mountall will do it)
+		cat ${rootmnt}/etc/system-image/writable-paths | while read line; do
+			set -- $line
+			# Skip invalid/commented entries
+			([ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ] || [ -z "$5" ]) && continue
+			[ "$1" = "#" ] && continue
+
+			# Skip invalid mount points
+			dstpath="${rootmnt}/$1"
+			[ ! -e "$dstpath" ] && continue
+
+			if [ "$3" = "temporary" ]; then
+				# Temporary entries are simple, just mount a tmpfs
+				echo "tmpfs $1 tmpfs $5 0 0" >> $FSTAB
+			elif [ "$3" = "persistent" ] || [ "$3" = "synced" ]; then
+				# Figure out the source path
+				if [ "$2" = "auto" ]; then
+					srcpath="${rootmnt}/userdata/system-data/$1"
+					path="/userdata/system-data/$1"
+				else
+					srcpath="${rootmnt}/userdata/$2"
+					path="/userdata/$2"
+				fi
+
+				if [ ! -e "$srcpath" ]; then
+					# Process new persistent or synced paths
+					dstown=$(stat -c "%u:%g" $dstpath)
+					dstmode=$(stat -c "%a" $dstpath)
+					mkdir -p ${srcpath%/*}
+					if [ ! -d "$dstpath" ]; then
+						# Deal with redirected files
+						if [ "$4" = "transition" ]; then
+							cp -a $dstpath $srcpath
+						else
+							touch $srcpath
+							chown $dstown $srcpath
+							chmod $dstmode $srcpath
+						fi
+					else
+						# Deal with redirected directories
+						if [ "$4" = "transition" ] || [ "$3" = "synced" ]; then
+							cp -aR $dstpath $srcpath
+						else
+							mkdir $srcpath
+							chown $dstown $srcpath
+							chmod $dstmode $srcpath
+						fi
+					fi
+				elif [ "$3" = "synced" ]; then
+					# Process existing synced paths
+					sync_dirs $dstpath . $srcpath
+				fi
+
+				# Write the fstab entry
+				if [ "$5" = "none" ]; then
+					echo "$path $1 none bind 0 0" >> $FSTAB
+				else
+					echo "$path $1 none bind,$5 0 0" >> $FSTAB
+				fi
+			else
+				continue
+			fi
+		done
+
+		# Extract the fstab from the android initrd
+		# NOTE: we should find a faster way of doing that or cache it
+		OLD_CWD=$(pwd)
+		mount -n -t tmpfs tmpfs ${rootmnt}/var/lib/lxc/android/rootfs
+		cd ${rootmnt}/var/lib/lxc/android/rootfs
+		cat /android-system/boot/android-ramdisk.img | gzip -d | cpio -i
+		cd $OLD_CWD
+
+		# Mount all the Android partitions
+		mount_android_partitions "${rootmnt}/var/lib/lxc/android/rootfs/fstab*" ${rootmnt}/android
+
+		# system is a special case
+		echo "initrd: mounting ${rootmnt}/var/lib/lxc/android/system.img as ${rootmnt}/android/system" >/dev/kmsg || true
+		mount --move /android-system ${rootmnt}/android/system
+
+		# Ubuntu overlay available in the Android system image (hardware specific configs)
+		mount_ubuntu_overlay ${rootmnt}/android/system/ubuntu ${rootmnt}
+
+		# Apply device-specific udev rules
+		if [ ! -f ${rootmnt}/android/system/ubuntu/lib/udev/rules.d/70-android.rules ] && [ "$device" != "unknown" ]; then
+			mount --bind ${rootmnt}/usr/lib/lxc-android-config/70-$device.rules ${rootmnt}/lib/udev/rules.d/70-android.rules
+		fi
+
+		# Bind-mount /lib/modules from Android
+		[ -e ${rootmnt}/android/system/lib/modules ] && mount --bind ${rootmnt}/android/system/lib/modules ${rootmnt}/lib/modules
+
+		# Bind-mount /var/lib/ureadahead if available on persistent storage
+		# this is required because ureadahead runs before mountall
+		if [ -e ${rootmnt}/userdata/system-data/var/lib/ureadahead ] && \
+				[ -e ${rootmnt}/var/lib/ureadahead ]; then
+			mount --bind ${rootmnt}/userdata/system-data/var/lib/ureadahead ${rootmnt}/var/lib/ureadahead
+		fi
+
+		# Setup the swap device
+		[ -e ${rootmnt}/userdata/SWAP.img ] && swapon ${rootmnt}/userdata/SWAP.img
+
+		# Apply customized content
+		for user in ${rootmnt}/userdata/user-data/*
+		do
+			if [ -d ${rootmnt}/custom/home ] && [ ! -e "$user/.customized" ]; then
+				echo "initrd: copying custom content tp " >/dev/kmsg || true
+				cp -Rap ${rootmnt}/custom/home/* "$user/"
+				cp -Rap ${rootmnt}/custom/home/.[a-zA-Z0-9]* "$user/"
+				touch "$user/.customized"
+				dstown=$(stat -c "%u:%g" "$user")
+				chown -R $dstown "$user/"
+			fi
+		done
+
+
+	# Old flipped model
+	elif [ -d /tmpmnt/ubuntu ]; then
+		mount --bind /tmpmnt/ubuntu ${rootmnt}
+		mountroot_status="$?"
+
+	# Possibly a re-partitioned device
+	else
+		echo "initrd: Couldn't find a system partition." >/dev/kmsg || true
+		panic "Couldn't find a system partition. Spawning adbd ..."
+	fi
+
+	[ "$quiet" != "y" ] && log_begin_msg "Running /scripts/local-bottom"
+	run_scripts /scripts/local-bottom
+	[ "$quiet" != "y" ] && log_end_msg
+}
