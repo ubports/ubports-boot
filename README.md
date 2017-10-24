@@ -25,7 +25,7 @@ Levels
 example:
 
 ```
-sudo fastboot boot ubports-boot.img -c debug=premount
+sudo fastboot boot ubports-boot.img -c break=premount
 ```
 
 And use telnet to login:
