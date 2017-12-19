@@ -107,8 +107,7 @@ BOOT_RAMDISK := $(LOCAL_PATH)/ubports-initramfs.gz
 BOOT_RAMDISK_SRC := $(LOCAL_PATH)/initramfs
 BOOT_RAMDISK_FILES := $(shell find $(BOOT_RAMDISK_SRC) -type f)
 
-#$(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK) $(BOOTIMAGE_EXTRA_DEPS)
-$(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(BOOTIMAGE_EXTRA_DEPS)
+$(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK) $(BOOTIMAGE_EXTRA_DEPS)
 	@echo "Making ubports-boot.img in $(dir $@) using $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK)"
 	@mkdir -p $(dir $@)
 	@rm -rf $@
@@ -118,16 +117,16 @@ else
 	@mkbootimg --ramdisk $(BOOT_RAMDISK) $(HYBRIS_BOOTIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
 endif
 
-#$(BOOT_RAMDISK): $(BOOT_RAMDISK_FILES)
-#	@echo "Making initramfs : $@"
-#	@rm -rf $(BOOT_INTERMEDIATE)/initramfs
-#	@mkdir -p $(BOOT_INTERMEDIATE)/initramfs
-#	@cp -a $(BOOT_RAMDISK_SRC)/*  $(BOOT_INTERMEDIATE)/initramfs
-#ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
-#	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(BOOT_RAMDISK)
-#else
-#	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
-#endif
+$(BOOT_RAMDISK): $(BOOT_RAMDISK_FILES)
+	@echo "Making initramfs : $@"
+	@rm -rf $(BOOT_INTERMEDIATE)/initramfs
+	@mkdir -p $(BOOT_INTERMEDIATE)/initramfs
+	@cp -a $(BOOT_RAMDISK_SRC)/*  $(BOOT_INTERMEDIATE)/initramfs
+ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
+	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(BOOT_RAMDISK)
+else
+	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
+endif
 
 .PHONY: hybris-common
 

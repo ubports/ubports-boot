@@ -1,0 +1,2 @@
+# The built initramfs should never be added to the repository.
+ubports-initramfs.gz
