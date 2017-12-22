@@ -279,7 +279,7 @@ mountroot()
 	identify_boot_mode
 
 	# Real partition or image, we both need charger mode.....
-	if ( [ -e /tmpmnt/system.img ] || [ -n "$syspart" ] ) && [ "$BOOT_MODE" = "android" ]; then
+	if ( [ -e /tmpmnt/rootfs.img ] || [ -n "$syspart" ] ) && [ "$BOOT_MODE" = "android" ]; then
 		# Factory/charger mode, just boot directly into the android rootfs
 		mkdir -p /ubuntu-system
 		mkdir -p /android-rootfs
@@ -289,12 +289,12 @@ mountroot()
 		if [ -n "$syspart" ]; then
 			mount -o rw $syspart /ubuntu-system
 		else
-			mount -o loop,rw /tmpmnt/system.img /ubuntu-system
+			mount -o loop,rw /tmpmnt/rootfs.img /ubuntu-system
 		fi
 		mount -o remount,ro /ubuntu-system
 
 		echo "initrd: mounting android system image" >/dev/kmsg || true
-		mount -o loop,ro /ubuntu-system/var/lib/lxc/android/system.img /android-system
+		mount -o loop,ro /tmpmnt/system.img /android-system
 
 		echo "initrd: extracting android ramdisk" >/dev/kmsg || true
 		OLD_CWD=$(pwd)
@@ -328,7 +328,7 @@ mountroot()
 		ln -s ../init ${rootmnt}/sbin/init
 		ln -s ../init ${rootmnt}/sbin/recovery
 		echo "initrd: booting android..." >/dev/kmsg || true
-    elif [ -e /tmpmnt/system.img -o -n "$syspart" ]; then
+    elif [ -e /tmpmnt/rootfs.img -o -n "$syspart" ]; then
 	    # Loop-mounted flipped model
 		# Transition .developer_mode to .writable_image
 		[ -e /tmpmnt/.developer_mode ] && mv /tmpmnt/.developer_mode /tmpmnt/.writable_image
@@ -342,13 +342,13 @@ mountroot()
 		if [ -n "$syspart" ]; then
 			mount -o rw $syspart ${rootmnt}
 		else
-			mount -o loop,rw /tmpmnt/system.img ${rootmnt}
+			mount -o loop,rw /tmpmnt/rootfs.img ${rootmnt}
 		fi
 		if [ -e /tmpmnt/.writable_image ]; then
-			echo "initrd: mounting system.img (image developer mode)" >/dev/kmsg || true
+			echo "initrd: mounting rootfs.img (image developer mode)" >/dev/kmsg || true
 			mountroot_status="$?"
 		else
-			echo "initrd: mounting system.img (user mode)" >/dev/kmsg || true
+			echo "initrd: mounting rootfs.img (user mode)" >/dev/kmsg || true
 			mount -o remount,ro ${rootmnt}
 			mountroot_status="$?"
 		fi
@@ -364,7 +364,7 @@ mountroot()
 		MOUNT="ro"
 		[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
 		echo "initrd: mounting device image as $MOUNT" >/dev/kmsg || true
-		mount -o loop,$MOUNT ${rootmnt}/var/lib/lxc/android/system.img /android-system
+		mount -o loop,$MOUNT ${rootmnt}/userdata/system.img /android-system
 
 		# Get device information
 		device=$(grep ^ro.product.device= /android-system/build.prop |sed -e 's/.*=//')
@@ -462,7 +462,7 @@ mountroot()
 		mount_android_partitions "${rootmnt}/var/lib/lxc/android/rootfs/fstab*" ${rootmnt}/android
 
 		# system is a special case
-		echo "initrd: mounting ${rootmnt}/var/lib/lxc/android/system.img as ${rootmnt}/android/system" >/dev/kmsg || true
+		echo "initrd: mounting ${rootmnt}/userdata/system.img as ${rootmnt}/android/system" >/dev/kmsg || true
 		mount --move /android-system ${rootmnt}/android/system
 
 		# Ubuntu overlay available in the Android system image (hardware specific configs)
