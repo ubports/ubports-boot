@@ -100,9 +100,9 @@ LOCAL_MODULE_SUFFIX := .img
 LOCAL_MODULE_PATH := $(PRODUCT_OUT)
 
 include $(BUILD_SYSTEM)/base_rules.mk
-BOOT_INTERMEDIATE := $(call intermediates-dir-for,ROOT,$(LOCAL_MODULE),)
+UBPORTS_BOOT_INTERMEDIATE := $(call intermediates-dir-for,ROOT,$(LOCAL_MODULE),)
 
-#UBPORTS_BOOT_RAMDISK := $(BOOT_INTERMEDIATE)/ubports-initramfs.gz
+#UBPORTS_BOOT_RAMDISK := $(UBPORTS_BOOT_INTERMEDIATE)/ubports-initramfs.gz
 UBPORTS_BOOT_RAMDISK := $(LOCAL_PATH)/ubports-initramfs.gz
 UBPORTS_BOOT_RAMDISK_SRC := $(LOCAL_PATH)/initramfs
 UBPORTS_BOOT_RAMDISK_FILES := $(shell find $(UBPORTS_BOOT_RAMDISK_SRC) -type f)
@@ -114,18 +114,18 @@ $(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(UBPORTS_BOOT_RAMDISK) $(BOOT
 ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
 	$(MKBOOTIMG) $(DEVICE_BASE_BOOT_IMAGE) $(INSTALLED_KERNEL_TARGET) $(UBPORTS_BOOT_RAMDISK) $(cmdline) $@
 else
-	@mkbootimg --ramdisk $(BOOT_RAMDISK) $(UBPORTS_BOOTIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
+	@mkbootimg --ramdisk $(UBPORTS_BOOT_RAMDISK) $(UBPORTS_BOOTIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
 endif
 
 $(UBPORTS_BOOT_RAMDISK): $(UBPORTS_BOOT_RAMDISK_FILES)
 	@echo "Making initramfs : $@"
-	@rm -rf $(BOOT_INTERMEDIATE)/initramfs
-	@mkdir -p $(BOOT_INTERMEDIATE)/initramfs
-	@cp -a $(UBPORTS_BOOT_RAMDISK_SRC)/*  $(BOOT_INTERMEDIATE)/initramfs
+	@rm -rf $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
+	@mkdir -p $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
+	@cp -a $(UBPORTS_BOOT_RAMDISK_SRC)/*  $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
 ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
-	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(UBPORTS_BOOT_RAMDISK)
+	@(cd $(UBPORTS_BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(UBPORTS_BOOT_RAMDISK)
 else
-	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
+	@(cd $(UBPORTS_BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
 endif
 
 .PHONY: ubports-common
