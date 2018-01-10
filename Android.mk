@@ -16,47 +16,47 @@
 #
 
 LOCAL_PATH:= $(call my-dir)
-HYBRIS_PATH:=$(LOCAL_PATH)
+UBPORTS_PATH:=$(LOCAL_PATH)
 
 # We use the commandline and kernel configuration varables from
 # build/core/Makefile to be consistent. Support for boot/recovery
 # image specific kernel COMMANDLINE vars is provided but whether it
 # works or not is down to your bootloader.
 
-HYBRIS_BOOTIMG_COMMANDLINE :=
+UBPORTS_BOOTIMG_COMMANDLINE :=
 
 # Find any fstab files for required partition information.
 # in AOSP we could use TARGET_VENDOR
 # TARGET_VENDOR := $(shell echo $(PRODUCT_MANUFACTURER) | tr '[:upper:]' '[:lower:]')
 # but Cyanogenmod seems to use device/*/$(TARGET_DEVICE) in config.mk so we will too.
-HYBRIS_FSTABS := $(shell find device/*/$(TARGET_DEVICE) -name *fstab* | grep -v goldfish)
+UBPORTS_FSTABS := $(shell find device/*/$(TARGET_DEVICE) -name *fstab* | grep -v goldfish)
 # If fstab files were not found from primary device repo then they might be in
 # some other device repo so try to search for them first in device/PRODUCT_MANUFACTURER. 
 # In many cases PRODUCT_MANUFACTURER is the short vendor name used in folder names.
-ifeq "$(HYBRIS_FSTABS)" ""
+ifeq "$(UBPORTS_FSTABS)" ""
 TARGET_VENDOR := "$(shell echo $(PRODUCT_MANUFACTURER) | tr '[:upper:]' '[:lower:]')"
-HYBRIS_FSTABS := $(shell find device/$(TARGET_VENDOR) -name *fstab* | grep -v goldfish)
+UBPORTS_FSTABS := $(shell find device/$(TARGET_VENDOR) -name *fstab* | grep -v goldfish)
 endif
 # Some devices devices have the short vendor name in PRODUCT_BRAND so try to
 # search from device/PRODUCT_BRAND if fstab files are still not found.
-ifeq "$(HYBRIS_FSTABS)" ""
+ifeq "$(UBPORTS_FSTABS)" ""
 TARGET_VENDOR := "$(shell echo $(PRODUCT_BRAND) | tr '[:upper:]' '[:lower:]')"
-HYBRIS_FSTABS := $(shell find device/$(TARGET_VENDOR) -name *fstab* | grep -v goldfish)
+UBPORTS_FSTABS := $(shell find device/$(TARGET_VENDOR) -name *fstab* | grep -v goldfish)
 endif
 
 # Get the unique /dev field(s) from the line(s) containing the fs mount point
 # Note the perl one-liner uses double-$ as per Makefile syntax
-HYBRIS_BOOT_PART := $(shell /usr/bin/perl -w -e '$$fs=shift; if ($$ARGV[0]) { while (<>) { next unless /^$$fs\s|\s$$fs\s/;for (split) {next unless m(^/dev); print "$$_\n"; }}} else { print "ERROR: *fstab* not found\n";}' /boot $(HYBRIS_FSTABS) | sort -u)
-HYBRIS_DATA_PART := $(shell /usr/bin/perl -w -e '$$fs=shift; if ($$ARGV[0]) { while (<>) { next unless /^$$fs\s|\s$$fs\s/;for (split) {next unless m(^/dev); print "$$_\n"; }}} else { print "ERROR: *fstab* not found\n";}' /data $(HYBRIS_FSTABS) | sort -u)
+UBPORTS_BOOT_PART := $(shell /usr/bin/perl -w -e '$$fs=shift; if ($$ARGV[0]) { while (<>) { next unless /^$$fs\s|\s$$fs\s/;for (split) {next unless m(^/dev); print "$$_\n"; }}} else { print "ERROR: *fstab* not found\n";}' /boot $(UBPORTS_FSTABS) | sort -u)
+UBPORTS_DATA_PART := $(shell /usr/bin/perl -w -e '$$fs=shift; if ($$ARGV[0]) { while (<>) { next unless /^$$fs\s|\s$$fs\s/;for (split) {next unless m(^/dev); print "$$_\n"; }}} else { print "ERROR: *fstab* not found\n";}' /data $(UBPORTS_FSTABS) | sort -u)
 
-$(warning ********************* /boot appears to live on $(HYBRIS_BOOT_PART))
-$(warning ********************* /data appears to live on $(HYBRIS_DATA_PART))
+$(warning ********************* /boot appears to live on $(UBPORTS_BOOT_PART))
+$(warning ********************* /data appears to live on $(UBPORTS_DATA_PART))
 
-ifneq ($(words $(HYBRIS_BOOT_PART))$(words $(HYBRIS_DATA_PART)),11)
-$(error There should be a one and only one device entry for HYBRIS_BOOT_PART and HYBRIS_DATA_PART)
+ifneq ($(words $(UBPORTS_BOOT_PART))$(words $(UBPORTS_DATA_PART)),11)
+$(error There should be a one and only one device entry for UBPORTS_BOOT_PART and UBPORTS_DATA_PART)
 endif
 
-HYBRIS_BOOTIMG_COMMANDLINE += datapart=$(HYBRIS_DATA_PART)
+UBPORTS_BOOTIMG_COMMANDLINE += datapart=$(UBPORTS_DATA_PART)
 
 
 ifneq ($(strip $(TARGET_NO_KERNEL)),true)
@@ -65,29 +65,29 @@ else
   INSTALLED_KERNEL_TARGET :=
 endif
 
-HYBRIS_BOOTIMAGE_ARGS := \
+UBPORTS_BOOTIMAGE_ARGS := \
 	$(addprefix --second ,$(INSTALLED_2NDBOOTLOADER_TARGET)) \
 	--kernel $(INSTALLED_KERNEL_TARGET)
 
 ifeq ($(BOARD_KERNEL_SEPARATED_DT),true)
   INSTALLED_DTIMAGE_TARGET := $(PRODUCT_OUT)/dt.img
-  HYBRIS_BOOTIMAGE_ARGS += --dt $(INSTALLED_DTIMAGE_TARGET)
+  UBPORTS_BOOTIMAGE_ARGS += --dt $(INSTALLED_DTIMAGE_TARGET)
   BOOTIMAGE_EXTRA_DEPS := $(INSTALLED_DTIMAGE_TARGET)
 endif
 
 ifdef BOARD_KERNEL_BASE
-  HYBRIS_BOOTIMAGE_ARGS += --base $(BOARD_KERNEL_BASE)
+  UBPORTS_BOOTIMAGE_ARGS += --base $(BOARD_KERNEL_BASE)
 endif
 
 ifdef BOARD_KERNEL_PAGESIZE
-  HYBRIS_BOOTIMAGE_ARGS += --pagesize $(BOARD_KERNEL_PAGESIZE)
+  UBPORTS_BOOTIMAGE_ARGS += --pagesize $(BOARD_KERNEL_PAGESIZE)
 endif
 
 # Strip lead/trail " from broken BOARD_KERNEL_CMDLINEs :(
-HYBRIS_BOARD_KERNEL_CMDLINE := $(shell echo '$(BOARD_KERNEL_CMDLINE)' | sed -e 's/^"//' -e 's/"$$//')
+UBPORTS_BOARD_KERNEL_CMDLINE := $(shell echo '$(BOARD_KERNEL_CMDLINE)' | sed -e 's/^"//' -e 's/"$$//')
 
-ifneq "" "$(strip $(HYBRIS_BOARD_KERNEL_CMDLINE) $(HYBRIS_BOOTIMG_COMMANDLINE))"
-  HYBRIS_BOOTIMAGE_ARGS += --cmdline "$(strip $(HYBRIS_BOARD_KERNEL_CMDLINE) $(HYBRIS_BOOTIMG_COMMANDLINE))"
+ifneq "" "$(strip $(UBPORTS_BOARD_KERNEL_CMDLINE) $(UBPORTS_BOOTIMG_COMMANDLINE))"
+  UBPORTS_BOOTIMAGE_ARGS += --cmdline "$(strip $(UBPORTS_BOARD_KERNEL_CMDLINE) $(UBPORTS_BOOTIMG_COMMANDLINE))"
 endif
 
 
@@ -100,34 +100,34 @@ LOCAL_MODULE_SUFFIX := .img
 LOCAL_MODULE_PATH := $(PRODUCT_OUT)
 
 include $(BUILD_SYSTEM)/base_rules.mk
-BOOT_INTERMEDIATE := $(call intermediates-dir-for,ROOT,$(LOCAL_MODULE),)
+UBPORTS_BOOT_INTERMEDIATE := $(call intermediates-dir-for,ROOT,$(LOCAL_MODULE),)
 
-#BOOT_RAMDISK := $(BOOT_INTERMEDIATE)/ubports-initramfs.gz
-BOOT_RAMDISK := $(LOCAL_PATH)/ubports-initramfs.gz
-BOOT_RAMDISK_SRC := $(LOCAL_PATH)/initramfs
-BOOT_RAMDISK_FILES := $(shell find $(BOOT_RAMDISK_SRC) -type f)
+#UBPORTS_BOOT_RAMDISK := $(UBPORTS_BOOT_INTERMEDIATE)/ubports-initramfs.gz
+UBPORTS_BOOT_RAMDISK := $(LOCAL_PATH)/ubports-initramfs.gz
+UBPORTS_BOOT_RAMDISK_SRC := $(LOCAL_PATH)/initramfs
+UBPORTS_BOOT_RAMDISK_FILES := $(shell find $(UBPORTS_BOOT_RAMDISK_SRC) -type f)
 
-$(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK) $(BOOTIMAGE_EXTRA_DEPS)
-	@echo "Making ubports-boot.img in $(dir $@) using $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK)"
+$(LOCAL_BUILT_MODULE): $(INSTALLED_KERNEL_TARGET) $(UBPORTS_BOOT_RAMDISK) $(BOOTIMAGE_EXTRA_DEPS)
+	@echo "Making ubports-boot.img in $(dir $@) using $(INSTALLED_KERNEL_TARGET) $(UBPORTS_BOOT_RAMDISK)"
 	@mkdir -p $(dir $@)
 	@rm -rf $@
 ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
-	$(MKBOOTIMG) $(DEVICE_BASE_BOOT_IMAGE) $(INSTALLED_KERNEL_TARGET) $(BOOT_RAMDISK) $(cmdline) $@
+	$(MKBOOTIMG) $(DEVICE_BASE_BOOT_IMAGE) $(INSTALLED_KERNEL_TARGET) $(UBPORTS_BOOT_RAMDISK) $(cmdline) $@
 else
-	@mkbootimg --ramdisk $(BOOT_RAMDISK) $(HYBRIS_BOOTIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
+	@mkbootimg --ramdisk $(UBPORTS_BOOT_RAMDISK) $(UBPORTS_BOOTIMAGE_ARGS) $(BOARD_MKBOOTIMG_ARGS) --output $@
 endif
 
-$(BOOT_RAMDISK): $(BOOT_RAMDISK_FILES)
+$(UBPORTS_BOOT_RAMDISK): $(UBPORTS_BOOT_RAMDISK_FILES)
 	@echo "Making initramfs : $@"
-	@rm -rf $(BOOT_INTERMEDIATE)/initramfs
-	@mkdir -p $(BOOT_INTERMEDIATE)/initramfs
-	@cp -a $(BOOT_RAMDISK_SRC)/*  $(BOOT_INTERMEDIATE)/initramfs
+	@rm -rf $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
+	@mkdir -p $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
+	@cp -a $(UBPORTS_BOOT_RAMDISK_SRC)/*  $(UBPORTS_BOOT_INTERMEDIATE)/initramfs
 ifeq ($(BOARD_CUSTOM_MKBOOTIMG),pack_intel)
-	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(BOOT_RAMDISK)
+	@(cd $(UBPORTS_BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | $(MINIGZIP) > $(UBPORTS_BOOT_RAMDISK)
 else
-	@(cd $(BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
+	@(cd $(UBPORTS_BOOT_INTERMEDIATE)/initramfs && find . | cpio -H newc -o ) | gzip -9 > $@
 endif
 
-.PHONY: hybris-common
+.PHONY: ubports-common
 
-hybris-common: bootimage ubports-boot
+ubports-common: bootimage ubports-boot
