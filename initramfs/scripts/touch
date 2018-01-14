@@ -8,7 +8,7 @@ pre_mountroot() {
 
 tell_kmsg() {
 	# Echos a string into /dev/kmsg, ignoring errors.
-	echo $1 >/dev/kmsg || true
+	echo "initrd: $1" >/dev/kmsg || true
 }
 
 identify_boot_mode() {
@@ -45,7 +45,7 @@ identify_boot_mode() {
 		esac
 	fi
 
-	tell_kmsg "initrd: boot mode: $BOOT_MODE"
+	tell_kmsg "boot mode: $BOOT_MODE"
 }
 
 set_ubuntu_version_properties() {
@@ -100,7 +100,7 @@ mount_android_partitions() {
 	fstab=$1
 	mount_root=$2
 
-	tell_kmsg "initrd: checking fstab $fstab for additional mount points"
+	tell_kmsg "checking fstab $fstab for additional mount points"
 
 	cat ${fstab} | while read line; do
 		set -- $line
@@ -116,7 +116,7 @@ mount_android_partitions() {
 		label=$(echo $1 | awk -F/ '{print $NF}')
 		[ -z "$label" ] && continue
 
-		tell_kmsg "initrd: checking mount label $label"
+		tell_kmsg "checking mount label $label"
 
 		# In case fstab provides /dev/mmcblk0p* lines
 		path="/dev/$label"
@@ -130,7 +130,7 @@ mount_android_partitions() {
 		[ ! -e "$path" ] && continue
 
 		mkdir -p ${mount_root}/$2
-		tell_kmsg "initrd: mounting $path as ${mount_root}/$2"
+		tell_kmsg "mounting $path as ${mount_root}/$2"
 		mount $path ${mount_root}/$2 -t $3 -o $4
 	done
 }
@@ -203,7 +203,7 @@ resize_userdata_if_needed() {
 	dblocks=$(($pblocks-4*$fsblocks))
 	if [ $dblocks -gt 10000 ];then
 		resize2fs -f $path
-		tell_kmsg "initrd: resized userdata filesystem to fill $path"
+		tell_kmsg "resized userdata filesystem to fill $path"
 	fi
 }
 
@@ -237,7 +237,7 @@ process_bind_mounts() {
 	# bind-mounted to /etc/fstab
 
 	if [ ! -e ${rootmnt}/etc/system-image/writable-paths ]; then
-		tell_kmsg "initrd: This rootfs does not have any writable-paths defined"
+		tell_kmsg "This rootfs does not have any writable-paths defined"
 		return 0
 	fi
 
@@ -247,7 +247,7 @@ process_bind_mounts() {
 	mount -o bind ${rootmnt}/run/image.fstab $FSTAB || panic "drop to adb"
 	echo "/dev/root / rootfs defaults,ro 0 0" >> $FSTAB
 
-	tell_kmsg "initrd: Adding bind-mounts to $FSTAB"
+	tell_kmsg "Adding bind-mounts to $FSTAB"
 	# Process the list of bind-mounts
 	# (but don't mount them, mountall will do it)
 	cat ${rootmnt}/etc/system-image/writable-paths | while read line; do
@@ -319,7 +319,7 @@ extract_android_ramdisk() {
 	# /android-rootfs
 
 	# NOTE: we should find a faster way of doing that or cache it
-	tell_kmsg "initrd: extracting android ramdisk"
+	tell_kmsg "extracting android ramdisk"
 	OLD_CWD=$(pwd)
 	mount -n -t tmpfs tmpfs /android-rootfs
 	cd /android-rootfs
@@ -365,11 +365,11 @@ mountroot() {
 	fi
 
 	if [ -z "$path" ]; then
-		tell_kmsg "initrd: Couldn't find data partition. Spawning adbd ..."
+		tell_kmsg "Couldn't find data partition. Spawning adbd ..."
 		panic "Couldn't find data partition. Spawning adbd ..."
 	fi
 
-	tell_kmsg "initrd: checking filesystem integrity for the userdata partition"
+	tell_kmsg "checking filesystem integrity for the userdata partition"
 	# Mounting and umounting first, let the kernel handle the journal and
 	# orphaned inodes (faster than e2fsck). Then, just run e2fsck forcing -y.
 	# Also check the amount of time used by to check the filesystem.
@@ -378,11 +378,11 @@ mountroot() {
 	umount /tmpmnt
 	e2fsck -y $path > /run/initramfs/e2fsck.out 2>&1
 	fsck_end=`date +%s`
-	tell_kmsg "initrd: checking filesystem for userdata took (including e2fsck) $((fsck_end-fsck_start)) seconds"
+	tell_kmsg "checking filesystem for userdata took (including e2fsck) $((fsck_end-fsck_start)) seconds"
 
 	resize_userdata_if_needed ${path}
 
-	tell_kmsg "initrd: mounting $path"
+	tell_kmsg "mounting $path"
 
 	# Mount the data partition to a temporary mount point
 	# FIXME: data=journal used as a workaround for bug 1387214
@@ -404,7 +404,7 @@ mountroot() {
 
 	# If both $imagefile and $syspart are set, something is wrong . The strange
 	# output from this could be a clue in that situation.
-	tell_kmsg "initrd: Ubuntu rootfs is $imagefile $syspart"
+	tell_kmsg "Ubuntu rootfs is $imagefile $syspart"
 
 	# Prepare the root filesystem
 	# NOTE: We mount it read-write in all cases, then remount read-only.
@@ -417,7 +417,7 @@ mountroot() {
 	mkdir -p /android-rootfs
 	mkdir -p /android-system
 
-	tell_kmsg "initrd: mounting system rootfs at /ubuntu-system"
+	tell_kmsg "mounting system rootfs at /ubuntu-system"
 	if [ -n "$syspart" ]; then
 		mount -o rw $syspart /ubuntu-system
 	else
@@ -428,14 +428,14 @@ mountroot() {
 	mkdir -p /android-system
 	MOUNT="ro"
 	[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
-	tell_kmsg "initrd: mounting android system image $MOUNT"
+	tell_kmsg "mounting android system image $MOUNT"
 	if [ $file_layout = "halium" ]; then
 		# rootfs.img and Android system.img are separate
-		tell_kmsg "initrd: mounting android system image from userdata partition"
+		tell_kmsg "mounting android system image from userdata partition"
 		mount -o loop,$MOUNT /tmpmnt/system.img /android-system
 	else
 		# Android system.img is inside Ubuntu image
-		tell_kmsg "initrd: mounting android system image from system rootfs"
+		tell_kmsg "mounting android system image from system rootfs"
 		mount -o loop,$MOUNT /ubuntu-system/var/lib/lxc/android/system.img /android-system
 	fi
 
@@ -444,7 +444,7 @@ mountroot() {
 	# Determine whether we should boot in rootfs or Android mode
 	if ( [ -e $imagefile ] || [ -n "$syspart" ] ) && [ "$BOOT_MODE" = "android" ]; then
 		# Bootloader says this is factory or charger mode, boot into Android.
-		tell_kmsg "initrd: Android boot mode for factory or charger mode"
+		tell_kmsg "Android boot mode for factory or charger mode"
 
 		mount /ubuntu-system -o remount,ro
 		mount --move /android-rootfs ${rootmnt}
@@ -469,20 +469,20 @@ mountroot() {
 		# Make sure we're booting into android's init
 		ln -s ../init ${rootmnt}/sbin/init
 		ln -s ../init ${rootmnt}/sbin/recovery
-		tell_kmsg "initrd: booting android..."
+		tell_kmsg "booting android..."
     elif [ -e $imagefile -o -n "$syspart" ]; then
 	    # Regular image boot
-		tell_kmsg "initrd: Normal boot"
+		tell_kmsg "Normal boot"
 
 		mount --move /ubuntu-system ${rootmnt}
 
 		# If either (android) /data/.writable_image or (on rootfs) 
 		# /.writable_image exist, mount the rootfs as rw
 		if [ -e /tmpmnt/.writable_image ] || [ -e ${rootmnt}/.writable_image ]; then
-			tell_kmsg "initrd: mounting $imagefile (image developer mode)"
+			tell_kmsg "mounting $imagefile (image developer mode)"
 			mountroot_status="$?"
 		else
-			tell_kmsg "initrd: mounting $imagefile (user mode)"
+			tell_kmsg "mounting $imagefile (user mode)"
 			mount -o remount,ro ${rootmnt}
 			mountroot_status="$?"
 		fi
@@ -494,8 +494,8 @@ mountroot() {
 
 		# Get device information
 		device=$(grep ^ro.product.device= /android-system/build.prop |sed -e 's/.*=//')
-		[ -z "$device" ] && device="unknown"
-		tell_kmsg "initrd: device is $device"
+		[ -z "$device" ] && device="unknown"; tell_kmsg "WARNING: Didn't find a device name. Is the Android system image mounted correctly?"
+		tell_kmsg "device is $device"
 
 		# Mount some tmpfs
 		mkdir -p ${rootmnt}/android
@@ -513,7 +513,7 @@ mountroot() {
 		mount_android_partitions "${rootmnt}/var/lib/lxc/android/rootfs/fstab*" ${rootmnt}/android
 
 		# system is a special case
-		tell_kmsg "initrd: moving Android system to /android/system"
+		tell_kmsg "moving Android system to /android/system"
 		mount --move /android-system ${rootmnt}/android/system
 
 		# Ubuntu overlay available in the Android system image (hardware specific configs)
@@ -541,7 +541,7 @@ mountroot() {
 		for user in ${rootmnt}/userdata/user-data/*
 		do
 			if [ -d ${rootmnt}/custom/home ] && [ ! -e "$user/.customized" ]; then
-				tell_kmsg "initrd: copying custom content tp "
+				tell_kmsg "copying custom content tp "
 				cp -Rap ${rootmnt}/custom/home/* "$user/"
 				cp -Rap ${rootmnt}/custom/home/.[a-zA-Z0-9]* "$user/"
 				touch "$user/.customized"
@@ -552,7 +552,7 @@ mountroot() {
 
 	else
 		# Possibly a re-partitioned device
-		tell_kmsg "initrd: Couldn't find a system partition."
+		tell_kmsg "Couldn't find a system partition."
 		panic "Couldn't find a system partition. Spawning adbd ..."
 	fi
 
