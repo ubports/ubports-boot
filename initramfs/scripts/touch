@@ -1,7 +1,6 @@
 # Local filesystem mounting			-*- shell-script -*-
 
-pre_mountroot()
-{
+pre_mountroot() {
 	[ "$quiet" != "y" ] && log_begin_msg "Running /scripts/local-top"
 	run_scripts /scripts/local-top
 	[ "$quiet" != "y" ] && log_end_msg
@@ -12,8 +11,7 @@ tell_kmsg() {
 	echo $1 >/dev/kmsg || true
 }
 
-identify_boot_mode()
-{
+identify_boot_mode() {
 	# Our current list of supported boot modes:
 	## BOOT_MODE = ubuntu and android
 	BOOT_MODE='ubuntu'
@@ -212,7 +210,6 @@ resize_userdata_if_needed() {
 identify_file_layout() {
 	# Determine if we have a Halium rootfs.img & system.img or legacy ubuntu.img
 
-	#
 	# $file_layout = "ubports" means there is an ubuntu.img which contains an
 	# android system.img at /var/lib/lxc/android/system.img
 	#
@@ -317,8 +314,20 @@ process_bind_mounts() {
 	done
 }
 
-mountroot()
-{
+extract_android_ramdisk() {
+	# Extracts the ramdisk from /android-system/boot/android-ramdisk.img to
+	# /android-rootfs
+
+	# NOTE: we should find a faster way of doing that or cache it
+	tell_kmsg "initrd: extracting android ramdisk"
+	OLD_CWD=$(pwd)
+	mount -n -t tmpfs tmpfs /android-rootfs
+	cd /android-rootfs
+	cat /android-system/boot/android-ramdisk.img | gzip -d | cpio -i
+	cd $OLD_CWD
+}
+
+mountroot() {
 	# list of possible userdata partition names
 	partlist="userdata UDA DATAFS USERDATA"
 
@@ -415,31 +424,34 @@ mountroot()
 		mount -o loop,rw $imagefile /ubuntu-system
 	fi
 
-	tell_kmsg "initrd: extracting android ramdisk"
-	OLD_CWD=$(pwd)
-	mount -n -t tmpfs tmpfs /android-rootfs
-	cd /android-rootfs
-	cat /android-system/boot/android-ramdisk.img | gzip -d | cpio -i
-	cd $OLD_CWD
+	# Mount the android system partition to a temporary location
+	mkdir -p /android-system
+	MOUNT="ro"
+	[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
+	tell_kmsg "initrd: mounting android system image $MOUNT"
+	if [ $file_layout = "halium" ]; then
+		# rootfs.img and Android system.img are separate
+		tell_kmsg "initrd: mounting android system image from userdata partition"
+		mount -o loop,$MOUNT /tmpmnt/system.img /android-system
+	else
+		# Android system.img is inside Ubuntu image
+		tell_kmsg "initrd: mounting android system image from system rootfs"
+		mount -o loop,$MOUNT /ubuntu-system/var/lib/lxc/android/system.img /android-system
+	fi
+
+	extract_android_ramdisk
 
 	# Determine whether we should boot in rootfs or Android mode
 	if ( [ -e $imagefile ] || [ -n "$syspart" ] ) && [ "$BOOT_MODE" = "android" ]; then
 		# Bootloader says this is factory or charger mode, boot into Android.
-		tell_kmsg "initrd: using android ramdisk as rootfs"
+		tell_kmsg "initrd: Android boot mode for factory or charger mode"
 
 		mount /ubuntu-system -o remount,ro
 		mount --move /android-rootfs ${rootmnt}
+		mount --move /android-system ${rootmnt}/system
 
-		# Mounting system
-		if [ $file_layout = "halium" ]; then
-			# rootfs.img and Android system.img are separate
-			tell_kmsg "initrd: mounting android system image from userdata partition"
-			mount -o loop,ro /tmpmnt/system.img /android-system
-		else
-			# Android system.img is inside Ubuntu image
-			tell_kmsg "initrd: mounting android system image from system rootfs"
-			mount -o loop,ro /ubuntu-system/var/lib/lxc/android/system.img /android-system
-		fi
+		# Mount all the Android partitions
+		mount_android_partitions "${rootmnt}/fstab*" ${rootmnt}
 
 		mkdir -p ${rootmnt}/ubuntu-system
 		mount --move /ubuntu-system ${rootmnt}/ubuntu-system
@@ -454,19 +466,19 @@ mountroot()
 		# Set ubuntu version properties
 		set_ubuntu_version_properties ${rootmnt}/ubuntu-system ${rootmnt}/data
 
-		# Mount all the remaining android partitions
-		mount_android_partitions "${rootmnt}/fstab*" ${rootmnt}
-
 		# Make sure we're booting into android's init
 		ln -s ../init ${rootmnt}/sbin/init
 		ln -s ../init ${rootmnt}/sbin/recovery
 		tell_kmsg "initrd: booting android..."
     elif [ -e $imagefile -o -n "$syspart" ]; then
 	    # Regular image boot
+		tell_kmsg "initrd: Normal boot"
 
 		mount --move /ubuntu-system ${rootmnt}
 
-		if [ -e /tmpmnt/.writable_image ]; then
+		# If either (android) /data/.writable_image or (on rootfs) 
+		# /.writable_image exist, mount the rootfs as rw
+		if [ -e /tmpmnt/.writable_image ] || [ -e ${rootmnt}/.writable_image ]; then
 			tell_kmsg "initrd: mounting $imagefile (image developer mode)"
 			mountroot_status="$?"
 		else
@@ -479,14 +491,6 @@ mountroot()
 		# Set ubuntu version properties
 		mkdir -p ${rootmnt}/userdata/android-data
 		set_ubuntu_version_properties ${rootmnt} ${rootmnt}/userdata/android-data
-
-		# Mount the android system partition to a temporary location
-		mkdir -p /android-system
-
-		MOUNT="ro"
-		[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
-		tell_kmsg "initrd: mounting android system image $MOUNT"
-		mount /android-system -o remount,$MOUNT
 
 		# Get device information
 		device=$(grep ^ro.product.device= /android-system/build.prop |sed -e 's/.*=//')
@@ -503,13 +507,7 @@ mountroot()
 
 		process_bind_mounts
 
-		# Extract the fstab from the android initrd
-		# NOTE: we should find a faster way of doing that or cache it
-		OLD_CWD=$(pwd)
-		mount -n -t tmpfs tmpfs ${rootmnt}/var/lib/lxc/android/rootfs
-		cd ${rootmnt}/var/lib/lxc/android/rootfs
-		cat /android-system/boot/android-ramdisk.img | gzip -d | cpio -i
-		cd $OLD_CWD
+		mount --move /android-rootfs ${rootmnt}/var/lib/lxc/android/rootfs
 
 		# Mount all the Android partitions
 		mount_android_partitions "${rootmnt}/var/lib/lxc/android/rootfs/fstab*" ${rootmnt}/android
