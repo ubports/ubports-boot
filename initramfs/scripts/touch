@@ -493,7 +493,7 @@ mountroot() {
 
 		# Get device information
 		device=$(grep ^ro.product.device= /android-system/build.prop |sed -e 's/.*=//')
-		[ -z "$device" ] && device="unknown"; tell_kmsg "WARNING: Didn't find a device name. Is the Android system image mounted correctly?"
+		[ -z "$device" ] && device="unknown" && tell_kmsg "WARNING: Didn't find a device name. Is the Android system image mounted correctly?"
 		tell_kmsg "device is $device"
 
 		# Mount some tmpfs
