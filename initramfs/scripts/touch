@@ -383,7 +383,6 @@ mountroot()
 		FSTAB=${rootmnt}/etc/fstab
 		touch ${rootmnt}/run/image.fstab
 		mount -o bind ${rootmnt}/run/image.fstab $FSTAB || panic "drop to adb"
-		echo "/dev/root / rootfs defaults,ro 0 0" >> $FSTAB
 
 		# Process the list of bind-mounts
 		# (but don't mount them, mountall will do it)
