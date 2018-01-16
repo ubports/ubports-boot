@@ -426,7 +426,7 @@ mountroot() {
 	# Mount the android system partition to a temporary location
 	mkdir -p /android-system
 	MOUNT="ro"
-	[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_image ] && MOUNT="rw"
+	[ -e ${rootmnt}/userdata/.writable_device_image -a -e ${rootmnt}/userdata/.writable_device_image ] && MOUNT="rw"
 	tell_kmsg "mounting android system image $MOUNT"
 	if [ $file_layout = "halium" ]; then
 		# rootfs.img and Android system.img are separate
