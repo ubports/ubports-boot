@@ -58,7 +58,8 @@ inject_loop() {
 }
 
 
-usb_setup "UBports initrd Debug setting up"
+usb_setup "ubports-boot telnet 192.168.2.15: ${REASON}"
+echo "initrd: PANIC for reason: ${REASON}" >/dev/kmsg || true
 
 USB_IFACE=notfound
 /sbin/ifconfig rndis0 $LOCAL_IP && USB_IFACE=rndis0

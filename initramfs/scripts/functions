@@ -73,6 +73,8 @@ panic()
 		chvt 1
 	fi
 
+	export REASON="$@"
+
 	echo "$@"
 	# Disallow console access
 	if [ -n "${panic}" ]; then
