@@ -419,8 +419,19 @@ mountroot() {
 	tell_kmsg "mounting system rootfs at /ubuntu-system"
 	if [ -n "$syspart" ]; then
 		mount -o rw $syspart /ubuntu-system
+		mount -o remount,ro /ubuntu-system
 	else
 		mount -o loop,rw $imagefile /ubuntu-system
+		# If either (android) /data/.writable_image or (on rootfs) 
+		# /.writable_image exist, mount the rootfs as rw
+		if [ -e /tmpmnt/.writable_image ] || [ -e $/ubuntu-system/.writable_image ]; then
+			tell_kmsg "mounting $imagefile (image developer mode)"
+			mountroot_status="$?"
+		else
+			tell_kmsg "mounting $imagefile (user mode)"
+			mount -o remount,ro /ubuntu-system
+			mountroot_status="$?"
+		fi
 	fi
 
 	# Mount the android system partition to a temporary location
@@ -475,16 +486,6 @@ mountroot() {
 
 		mount --move /ubuntu-system ${rootmnt}
 
-		# If either (android) /data/.writable_image or (on rootfs) 
-		# /.writable_image exist, mount the rootfs as rw
-		if [ -e /tmpmnt/.writable_image ] || [ -e ${rootmnt}/.writable_image ]; then
-			tell_kmsg "mounting $imagefile (image developer mode)"
-			mountroot_status="$?"
-		else
-			tell_kmsg "mounting $imagefile (user mode)"
-			mount -o remount,ro ${rootmnt}
-			mountroot_status="$?"
-		fi
 		mount --move /tmpmnt ${rootmnt}/userdata
 
 		# Set ubuntu version properties
